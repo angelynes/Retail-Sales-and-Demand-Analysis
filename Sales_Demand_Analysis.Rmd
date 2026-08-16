@@ -1,0 +1,324 @@
+---
+title: "Retail Sales and Demand Analysis"
+author: "Angelyne Susanto"
+date: "2026-03-20"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+---
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+# Load libraries
+library(tidyverse) # Core data manipulation and visualization 
+library(lubridate) # Date and time formatting 
+library(arules) # Market Basket Analysis (running the Apriori algorithm)
+library(tsibble) # Structuring data into continuous time-series timelines 
+library(fable) # Machine learning and ARIMA demand forecasting 
+library(ggtime) # Time-series plotting extensions 
+library(plotly) # Converting static plots into interactive charts 
+library(htmltools) # Grouping and stacking interactive HTML charts together 
+library(knitr) # Formatting clean, professional tables 
+```
+
+``` {r, echo=FALSE, warning=FALSE, message=FALSE}
+# Load all data in the folder 
+files <- list.files(path = "data/", pattern = "\\.csv$", full.names = TRUE)
+datasets <- lapply(files, read_csv, show_col_types = FALSE)
+
+names(datasets) <- basename(files)
+names(datasets) <- gsub("\\.csv$", "", names(datasets))
+```
+
+# Analysis 1 - Items Frequently Bought Together 
+``` {r, echo=FALSE, warning=FALSE, message=FALSE}
+# Analysis 1: Items frequently bought together 
+
+# Prepare the data (pulling out all items in each receipt number)
+transaction_list <- split(
+  datasets[["receipts_by_item"]]$Core_Item,
+  datasets[["receipts_by_item"]]$`Receipt number`
+)
+transactions <- as(transaction_list, "transactions")
+
+# Run Apriori, target "frequent itemsets" to find things frequently bought together in same receipt number 
+frequent_pairs <- apriori(
+  transactions, 
+  parameter = list(
+    supp = 0.001,
+    minlen = 2, 
+    maxlen = 2, 
+    target = "frequent itemsets" 
+  )
+)
+
+# Sort by support (how often they appear together) and grab the top 10
+top_pairs <- head(frequent_pairs, n = 10, by = "support")
+
+# Print the clean list of pairs
+inspect(top_pairs)
+```
+
+
+# Analysis 2 - Demand Forecasting
+``` {r, echo=FALSE, warning=FALSE, message=FALSE}
+# Analysis 2 - Demand Forecasting 
+
+# Demand Forecast Plot 
+# Find the top 10 best selling items 
+top_10_items <- datasets[["receipts_by_item"]] |> 
+  group_by(Core_Item) |> 
+  summarize(Total_Sold = sum(Quantity, na.rm = TRUE)) |> 
+  slice_max(order_by = Total_Sold, n = 10) |> 
+  pull(Core_Item)
+
+# Prep time series data for all items 
+top_10_demand <- datasets[["receipts_by_item"]] |> 
+  filter(Core_Item %in% top_10_items) |> 
+  mutate(
+    Date_Parsed = mdy_hm(Date),
+    Week = floor_date(Date_Parsed, "week")
+  ) |> 
+  group_by(Week, Core_Item) |> 
+  summarize(Total_Quantity = sum(Quantity, na.rm = TRUE), .groups = "drop") |> 
+  mutate(Week = yearweek(Week)) |> 
+  as_tsibble(index = Week, key = Core_Item) |> 
+  # Explicitly fill any missing weeks with 0 sales to keep the timeline unbroken
+  fill_gaps(Total_Quantity = 0) |> 
+  # Remove the incomplete final week for ALL items
+  filter(Week != max(Week))
+
+# Run machine learning forecast for all 10 simultaneously 
+# Calculate 10 separate optimal ARIMA models at the exact same time
+top_10_models <- top_10_demand |> 
+  model(arima = ARIMA(Total_Quantity))
+
+top_10_forecasts <- top_10_models |> 
+  forecast(h = "4 weeks")
+
+# Generate the demand forecasting interactive plot 
+forecast_plots <- list()
+for (item in top_10_items) {
+  # Clean the history data
+  item_history <- top_10_demand |> 
+    filter(Core_Item == item) |> 
+    as_tibble() |> 
+    mutate(Week = as.Date(Week))
+    
+  # Clean the forecast data and rename columns
+  item_forecast_data <- top_10_forecasts |> 
+    filter(Core_Item == item) |> 
+    hilo(level = c(80, 95)) |> 
+    unpack_hilo(c("80%", "95%")) |> 
+    as_tibble() |> 
+    rename(
+      lower_80 = `80%_lower`, upper_80 = `80%_upper`,
+      lower_95 = `95%_lower`, upper_95 = `95%_upper`
+    ) |> 
+    mutate(Week = as.Date(Week))
+    
+  # Build the plot with the Ghost Line trick
+  p <- ggplot() +
+    # The Shaded Ribbons (No tooltips to keep the polygons from breaking)
+    geom_ribbon(data = item_forecast_data, 
+                aes(x = Week, ymin = lower_95, ymax = upper_95, group = 1), 
+                fill = "#c6c6ff", alpha = 0.7) +
+    geom_ribbon(data = item_forecast_data, 
+                aes(x = Week, ymin = lower_80, ymax = upper_80, group = 1), 
+                fill = "#8c9eff", alpha = 0.9) +
+    
+    # Ghost lines: Invisible lines tracing the top edge purely to hold the tooltips
+    geom_line(data = item_forecast_data, 
+              aes(x = Week, y = upper_95, 
+                  text = paste("95% Safety Limit:", round(upper_95, 1), "units"), 
+                  group = 1), 
+              color = "#c6c6ff", alpha = 0.01) +
+    geom_line(data = item_forecast_data, 
+              aes(x = Week, y = upper_80, 
+                  text = paste("80% Safety Limit:", round(upper_80, 1), "units"), 
+                  group = 1), 
+              color = "#8c9eff", alpha = 0.01) +
+    
+    # The visible prediction and history lines 
+    geom_line(data = item_forecast_data, 
+              aes(x = Week, y = .mean, 
+                  text = paste("Predicted Avg:", round(.mean, 1), "units"),
+                  group = 1), 
+              color = "#283593", linewidth = 1) +
+    geom_line(data = item_history, 
+              aes(x = Week, y = Total_Quantity, group = 1), color = "black") +
+    geom_point(data = item_history, 
+               aes(x = Week, y = Total_Quantity, 
+                   text = paste("Sold:", Total_Quantity, "units")), 
+               size = 1.5, color = "black") +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+    labs(
+      y = "Quantity Sold (Units)",
+      x = "Timeline"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title = element_text(face = "bold", size = 16),
+      panel.grid.minor = element_blank(), 
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  # Render to Plotly
+  forecast_plots[[item]] <- ggplotly(p, tooltip = "text") |> 
+    layout(
+      title = list(
+        text = paste0("Demand Forecast: ", item, "<br><span style='font-size:13px; color:#5c6bc0;'>Dark blue band = 80% safety stock | Light blue band = 95% safety stock</span>")
+      ),
+      margin = list(t = 70) 
+    )
+}
+
+# Forcing RStudio to physically draw the HTML widgets in viewer 
+browsable(tagList(forecast_plots))
+
+
+
+# Historical Weekly Demand Plot 
+# Generate 10 interactive historic plots 
+# Create a new empty list to store just the history charts
+# historical_plots <- list()
+# 
+# for (item in top_10_items) {
+#   # Clean and format the historical data for the current item
+#   item_history <- top_10_demand |> 
+#     filter(Core_Item == item) |> 
+#     as_tibble() |> 
+#     mutate(Week = as.Date(Week))
+#   
+#   # Build the base plot
+#   p <- ggplot(item_history, aes(x = Week, y = Total_Quantity)) +
+#     # The group = 1 trick ensures the line stays connected 
+#     geom_line(aes(group = 1), color = "black") +
+#     geom_point(aes(text = paste("Sold:", Total_Quantity, "units")), 
+#                size = 1.5, color = "black") +
+#     # Clean monthly formatting for the X-axis
+#     scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+#     labs(
+#       title = paste("Historical Weekly Demand:", item),
+#       y = "Quantity Sold (Units)",
+#       x = "Timeline"
+#     ) +
+#     theme_minimal(base_size = 14) +
+#     theme(
+#       plot.title = element_text(face = "bold", size = 16),
+#       panel.grid.minor = element_blank(),
+#       axis.text.x = element_text(angle = 45, hjust = 1)
+#     )
+#   
+#   # Convert to Plotly and save it into the historical_plots list
+#   historical_plots[[item]] <- ggplotly(p, tooltip = "text") |> 
+#     layout(margin = list(t = 50)) 
+# }
+
+# Forcing RStudio to physically draw the HTML widgets in viewer 
+# browsable(tagList(historical_plots))
+```
+
+
+# Analysis 3 - Customer Loyalty vs Walk-Ins (RFM Analysis)
+### Overall Loyalty vs Walk-In Split 
+``` {r, echo=FALSE, warning=FALSE, message=FALSE}
+# Macro View - Loyalty vs Walk-Ins Summary 
+loyalty_split <- datasets[["receipts_by_item"]] |> 
+  mutate(
+    Customer_Type = ifelse(tolower(`Customer name`) == "anonymous shopper", "Walk-in (Anonymous)", "Store Regulars")
+  ) |> 
+  group_by(Customer_Type) |> 
+  summarize(
+    Total_Visits = n_distinct(`Receipt number`), 
+    Total_Revenue = sum(`Net sales`, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(loyalty_split)
+
+# Micro View - RFM on Known Customers 
+analysis_date <- datasets[["receipts_by_item"]] |> 
+  mutate(Date_Parsed = mdy_hm(Date)) |> 
+  pull(Date_Parsed) |> 
+  max(na.rm = TRUE)
+
+rfm_base <- datasets[["receipts_by_item"]] |> 
+  mutate(Date_Parsed = mdy_hm(Date)) |> 
+  filter(tolower(`Customer name`) != "anonymous shopper") |> 
+  group_by(`Customer name`) |> 
+  summarize(
+    Recency = as.numeric(difftime(analysis_date, max(Date_Parsed, na.rm = TRUE), units = "days")),
+    Frequency = n_distinct(`Receipt number`),
+    Monetary = sum(`Net sales`, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Score and Segment the Customer 
+rfm_segments <- rfm_base |> 
+  mutate(
+    R_Score = ntile(desc(Recency), 5),
+    F_Score = ntile(Frequency, 5),
+    M_Score = ntile(Monetary, 5),
+    
+    Customer_Segment = case_when(
+      Frequency == 1 ~ "One-Time Shopper",
+      R_Score >= 4 & F_Score >= 4 ~ "VIP Regulars",
+      R_Score <= 2 & F_Score >= 4 ~ "At-Risk VIPs", 
+      F_Score >= 2 & F_Score <= 3 ~ "Occasional Visitors",
+      TRUE ~ "Other"
+    )
+  )
+
+# Interactive RFM Visualization 
+rfm_plot <- ggplot(rfm_segments, aes(x = Recency, y = Frequency, color = Customer_Segment)) +
+  geom_point(aes(size = Monetary, 
+                 text = paste("Customer:", `Customer name`, 
+                              "<br>Visits:", Frequency, 
+                              "<br>Spent: $", round(Monetary, 2), 
+                              "<br>Days Since Last Visit:", round(Recency, 0))), 
+             alpha = 0.7) +
+  scale_color_manual(values = c(
+    "VIP Regulars" = "#2ecc71",        
+    "One-Time Shopper" = "#95a5a6",    
+    "At-Risk VIPs" = "#e74c3c",        
+    "Occasional Visitors" = "#3498db", 
+    "Other" = "#f39c12"                
+  )) +
+  labs(
+    title = "Store Regulars Health (RFM Analysis)",
+    subtitle = "Size of bubble represents total money spent",
+    x = "Recency (Days Since Last Visit)",
+    y = "Frequency (Total Visits)",
+    color = "Customer Segment"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(color = "grey40", size = 12),
+    panel.grid.minor = element_blank()
+  )
+
+ggplotly(rfm_plot, tooltip = "text")
+```
+
+### List of At-Risk VIPs 
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# At-risk VIPs 
+# Filter the RFM segments for just the At-Risk VIPs and sort by highest spenders 
+at_risk_vips <- rfm_segments |> 
+  filter(Customer_Segment == "At-Risk VIPs") |> 
+  select(`Customer name`, Recency, Frequency, Monetary) |> 
+  arrange(desc(Monetary)) # Put the most valuable lost customers at the very top
+
+kable(
+  at_risk_vips, 
+  caption = "All At-Risk VIPs (Win-Back Targets)",
+  format.args = list(big.mark = ",", scientific = FALSE),
+  longtable = TRUE # This ensures the table breaks properly across multiple PDF pages
+)
+
+write_csv(
+  at_risk_vips, 
+  "data/at_risk_vips_winback_list.csv")
+```
