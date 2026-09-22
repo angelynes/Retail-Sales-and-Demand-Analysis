@@ -1,35 +1,87 @@
-# Retail Analytics & Operations Optimization 
+# Retail Analytics & Operations Optimization
 
-## Overview 
-This project contains an end-to-end retail analytics project designed to translate raw transactional records into actionable operational intelligence. Using R, this project implements predictive demand forecasting, market association mining, and customer behavioral segmentation to support data-driven decision-making in inventory management, store layout optimization, and targeted marketing campaigns. 
+## Overview
 
-***Note:** To protect proprietary business information, all data in this repository has been rigorously anonymized. Customer names have been hashed, product identities have been globally shuffled, and financial/volume metrics have been scaled using random multipliers, while preserving the underlying statistical properties, mathematical frameworks, and code architecture.* 
+This project presents an end-to-end retail analytics workflow that transforms transactional sales data into actionable business insights.
+
+Using R, the analysis combines demand forecasting, market basket analysis, and customer segmentation to support decisions in inventory planning, merchandising, customer retention, and marketing.
+
+> **Data Privacy:** To protect proprietary business information, all data in this repository has been anonymized. Customer identities were hashed, product identities were shuffled, and sensitive financial and volume metrics were scaled while preserving the analytical structure required for the methods demonstrated in this project.
 
 ## Technical Toolkit
-*   **Language:** R
-*   **Data Wrangling:** `tidyverse` (`dplyr`, `readr`, `lubridate`)
-*   **Time Series & Machine Learning:** `tsibble`, `fable` (ARIMA models)
-*   **Market Basket Analysis:** `arules` (Apriori algorithm)
-*   **Visualization:** `ggplot2`, `plotly`
 
-## Key Analyses & Business Impact
+- **Language:** R
+- **Data Wrangling:** `tidyverse`, `dplyr`, `readr`, `lubridate`
+- **Time Series Forecasting:** `tsibble`, `fable` — ARIMA
+- **Market Basket Analysis:** `arules` — Apriori algorithm
+- **Visualization:** `ggplot2`, `plotly`
+- **Reporting:** R Markdown
 
-### 1. Demand Forecasting (ARIMA modeling)
-*   **Objective:** Predict the next 4 weeks of sales for the top 10 highest-volume items.
-*   **Methodology:** Converted random transaction timestamps into continuous weekly time-series data, filled timeline gaps, and ran an automated ARIMA model to calculate median expected sales alongside 80% and 95% statistical safety stock limits.
-*   **Impact:** Replaced "gut feeling" purchasing with mathematical limits, preventing over-ordering and reducing inventory waste for highly perishable goods.
+## Key Analyses
 
-### 2. Market Basket Analysis (Apriori Algorithm)
-*   **Objective:** Identify which specific products are most frequently purchased together to optimize store layout and promotions.
-*   **Methodology:** Processed over 14,000 transactions through the Apriori algorithm, isolating high-confidence pairs and filtering out random purchases.
-*   **Impact:** Discovered core anchor items and distinct vegetable/protein clusters. This guided the creation of grab-and-go meal kits and cross-selling scripts for staff, increasing overall basket size.
+### 1. Demand Forecasting
 
-### 3. Customer Segmentation (RFM Analysis)
-*   **Objective:** Identify the most valuable regulars and flag high-value customers at risk of churning.
-*   **Methodology:** Scored known customers on a 1 to 5 curve based on Recency, Frequency, and Monetary value, segmenting them into distinct business categories (e.g., "VIP Regulars", "At-Risk VIPs"). 
-*   **Impact:** Proved mathematically that loyalty members generate a disproportionate amount of revenue per visit compared to anonymous walk-ins. Generated an automated, ranked list of "At-Risk" customers for targeted WhatsApp win-back campaigns.
+**Business Question:**  
+How much inventory should be purchased for high-volume products over the next four weeks?
+
+**Approach:**  
+- Aggregated transaction data into continuous weekly time series
+- Filled missing periods to maintain consistent temporal structure
+- Identified the 10 highest-volume products
+- Fit automated ARIMA models using `fable`
+- Generated four-week forecasts with 80% and 95% prediction intervals
+
+**Business Application:**  
+Forecast ranges were used to inform purchasing and safety-stock decisions, replacing intuition-based ordering with a more structured inventory-planning process.
+
+---
+
+### 2. Market Basket Analysis
+
+**Business Question:**  
+Which products are frequently purchased together, and how can those relationships support merchandising and cross-selling?
+
+**Approach:**  
+- Processed more than 14,000 transactions
+- Applied the Apriori algorithm to identify recurring product combinations
+- Evaluated association rules using support, confidence, and lift
+- Filtered low-value associations to focus on commercially meaningful purchasing patterns
+
+**Business Application:**  
+The analysis identified anchor products and recurring product clusters that informed product placement, bundle ideas, and cross-selling opportunities.
+
+---
+
+### 3. Customer Segmentation
+
+**Business Question:**  
+Who are the most valuable customers, and which high-value customers may be at risk of becoming inactive?
+
+**Approach:**  
+- Calculated Recency, Frequency, and Monetary metrics for identified customers
+- Assigned RFM scores from 1–5
+- Grouped customers into actionable segments such as:
+  - VIP Regulars
+  - Loyal Customers
+  - At-Risk VIPs
+  - Inactive Customers
+- Generated ranked customer lists for retention outreach
+
+**Business Application:**  
+The analysis quantified differences in purchasing behavior between customer segments and created a structured way to prioritize retention and win-back campaigns.
 
 ## Repository Structure
-*   `data/`: Contains the anonymized and scaled `.csv` transaction datasets.
-*   `Sales_Demand_Analysis.Rmd`: The complete RMarkdown analysis pipeline script. 
-*   `Sales_Demand_Analysis.html`: The rendered HTML report complete with interactive visualizations. 
+
+```text
+Retail-Sales-and-Demand-Analysis/
+│
+├── data/
+│   └── anonymized transaction datasets
+│
+├── Sales_Demand_Analysis.Rmd
+│   └── complete analysis and modeling pipeline
+│
+├── Sales_Demand_Analysis.html
+│   └── rendered report with interactive visualizations
+│
+└── README.md
